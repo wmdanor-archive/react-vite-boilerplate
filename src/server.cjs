@@ -4,12 +4,14 @@ try {
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
+const zlib = require('zlib');
 
-const port = process.env.PORT ?? 3000;
+const port = Number(process.env.PORT ?? 3000);
 
 const distPath = path.resolve(__dirname, '../dist');
 const indexPath = path.resolve(distPath, 'index.html');
 
+/** @type {Record<string, string>} */
 const mimeTypes = {
   '.html': 'text/html',
   '.js': 'text/javascript',
@@ -31,31 +33,45 @@ const mimeTypes = {
 
 const server = http.createServer((request, response) => {
   const filePath = (request.url === '/' ? '/index.html' : request.url).slice(1);
-
-  console.log(filePath);
+  const acceptEncoding = request.headers['accept-encoding'] || '';
 
   const extname = path.extname(filePath).toLowerCase();
 
-  const contentType = mimeTypes[extname] || 'application/octet-stream';
+  const contentType = mimeTypes[extname] ?? 'application/octet-stream';
 
-  fs.readFile(path.resolve(distPath, filePath), (error, data) => {
-    if (error) {
-      if(error.code === 'ENOENT') {
-        fs.readFile(indexPath, (error, data) => {
-          response.writeHead(200, { 'Content-Type': 'text/html' });
-          response.end(data, 'utf-8');
-        });
-      }
-      else {
+  function pipeStream(readStream, contentType = 'text/html') {
+    if (acceptEncoding.match(/\bdeflate\b/)) {
+      response.writeHead(200, { 'Content-Encoding': 'deflate', 'Content-Type': contentType });
+      readStream.pipe(zlib.createDeflate()).pipe(response);
+    } else if (acceptEncoding.match(/\bgzip\b/)) {
+      response.writeHead(200, { 'Content-Encoding': 'gzip', 'Content-Type': contentType });
+      readStream.pipe(zlib.createGzip()).pipe(response);
+    } else {
+      response.writeHead(200, { 'Content-Type': 'text/html' });
+      readStream.pipe(response);
+    }
+  }
+
+  const stream = fs.createReadStream((path.resolve(distPath, filePath)));
+
+  pipeStream(stream, contentType);
+
+  stream.on('error', (error) => {
+    if(error.code === 'ENOENT') {
+      const indexStream = fs.createReadStream((indexPath));
+
+      indexStream.on('error', () => {
         response.writeHead(500);
         response.end('500 Internal Server Error');
-      }
+      })
+
+      pipeStream(indexStream);
     }
     else {
-      response.writeHead(200, { 'Content-Type': contentType });
-      response.end(data, 'utf-8');
+      response.writeHead(500);
+      response.end('500 Internal Server Error');
     }
-  });
+  })
 });
 
 server.listen(port);
