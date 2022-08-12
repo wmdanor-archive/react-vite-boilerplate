@@ -1,6 +1,7 @@
 try {
   require('dotenv').config();
-} catch {}
+} catch {
+}
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
@@ -28,7 +29,7 @@ const mimeTypes = {
   '.eot': 'application/vnd.ms-fontobject',
   '.otf': 'application/font-otf',
   '.wasm': 'application/wasm',
-  '.txt': 'text/plain'
+  '.txt': 'text/plain',
 };
 
 const server = http.createServer((request, response) => {
@@ -52,26 +53,27 @@ const server = http.createServer((request, response) => {
     }
   }
 
-  const stream = fs.createReadStream((path.resolve(distPath, filePath)));
+  function respondError() {
+    response.writeHead(500);
+    response.end('500 Internal Server Error');
+  }
 
-  pipeStream(stream, contentType);
+  const stream = fs.createReadStream(path.resolve(distPath, filePath));
 
   stream.on('error', (error) => {
-    if(error.code === 'ENOENT') {
-      const indexStream = fs.createReadStream((indexPath));
+    if (error.code === 'ENOENT') {
+      const indexStream = fs.createReadStream(indexPath);
 
-      indexStream.on('error', () => {
-        response.writeHead(500);
-        response.end('500 Internal Server Error');
-      })
+      indexStream.on('error', respondError);
 
       pipeStream(indexStream);
+
+    } else {
+      respondError();
     }
-    else {
-      response.writeHead(500);
-      response.end('500 Internal Server Error');
-    }
-  })
+  });
+
+  pipeStream(stream, contentType);
 });
 
 server.listen(port);
